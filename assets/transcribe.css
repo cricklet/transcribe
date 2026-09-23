@@ -1,0 +1,1424 @@
+/* Jianpu Transcriber — a four-pane workspace: transcription library, the
+   jianpu-ly source, the engraved notation, and the filterable syntax
+   reference. Palette and controls come from ui.css; everything here is
+   border-led with no background fills, per the house style. */
+
+:root {
+  /* A restrained set of syntax hues, one per family of jianpu-ly token.
+     Deliberately close to --text so the source still reads as text. */
+  --jp-dur:   #1f7a5a;   /* note values */
+  --jp-mark:  #8a5a1f;   /* barlines, repeats, tuplets */
+  --jp-meta:  #2b66c9;   /* key / meter / tempo / headers */
+  --jp-word:  #7a4fa8;   /* lyrics, chord symbols, decorations */
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --jp-dur:  #5fc4a0;
+    --jp-mark: #d6a45f;
+    --jp-meta: #7fb0f0;
+    --jp-word: #bb96e0;
+  }
+}
+
+/* The handwritten chord face, shared with the melodic trainer (same file, so
+   it's already cached if you've been there). Only chord SYMBOLS use it — the
+   staff itself is engraved by abcjs as SVG paths, not text. */
+@font-face {
+  font-family: 'Petaluma Script';
+  src: url('fonts/PetalumaScript.woff2') format('woff2');
+  font-weight: normal; font-style: normal; font-display: swap;
+}
+:root { --chord-font: 'Petaluma Script', 'Reddit Mono', ui-monospace, monospace; }
+
+* { box-sizing: border-box; }
+/* A sideways flick is for reading across a wide system or a long line of
+   source — never for leaving the page. Left to itself the browser reads the
+   overscroll at the end of one as swipe-to-go-back and takes the whole
+   workspace with it, which is about the worst thing that can happen in the
+   middle of transcribing. Off at the root, and contained in everything that
+   scrolls across (`contain` keeps each scroller's own sideways scrolling and
+   only stops it handing the leftovers up to the document). */
+html, body { overscroll-behavior-x: none; }
+.jp-score-scroll, .jp-phone-score, .jp-ed-area, .jp-respell { overscroll-behavior-x: contain; }
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: 'Reddit Mono', ui-monospace, Menlo, Consolas, monospace;
+  font-size: 14px;
+}
+
+/* ── layout ────────────────────────────────────────────────────────── */
+/* Two boxes across the window, never three: the notation, which is always
+   there, and at most ONE side pane beside it — the transcriptions or the
+   source, whichever stop ` is on. Nothing here collapses or expands; a pane
+   that isn't up isn't rendered, so there are no strips, no chevrons and no
+   in-between widths to style. */
+.jp-frame { display: flex; flex-direction: column; height: 100vh; }
+.jp-app { display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; align-items: stretch; }
+.jp-rail {
+  flex: 0 0 360px; min-width: 0; height: 100%; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 7px;
+  /* Only a little air under the list now — the panel ends in its own bar,
+     and a deep pad below that would leave the bar hovering off the floor. */
+  padding: 9px 12px 9px;
+}
+.jp-pane {
+  min-width: 0; height: 100%;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 9px 13px 12px;
+}
+.jp-pane-editor { flex: 1 1 0; min-width: 280px; }
+.jp-pane-score  { flex: 1.25 1 0; min-width: 320px; }
+
+/* The handle between the editor and the notation. It draws nothing — no line
+   down the window, and none on hover either; the resize cursor and the hint
+   are the whole affordance. Vertical when the panes sit side by side,
+   horizontal when they stack. */
+.jp-splitter {
+  flex: 0 0 5px; align-self: stretch; cursor: col-resize;
+  background: none; position: relative;
+}
+/* Don't let the pointer slip onto the panes mid-drag, and keep the cursor. */
+body.jp-resizing-x, body.jp-resizing-x * { cursor: col-resize !important; user-select: none; }
+body.jp-resizing-y, body.jp-resizing-y * { cursor: row-resize !important; user-select: none; }
+
+/* Narrow: stack everything into ONE screenful — the page itself never
+   scrolls. The sections are a column that adds up to the viewport, and each
+   one scrolls inside itself: the rail's list, the editor's textarea, and the
+   notation as its own mini scroller. That way the source stays put while
+   you page through the engraving, instead of the whole document sliding.
+   Two sections rather than three, the same as side by side, and the divider
+   turns horizontal. */
+@media (max-width: 1200px) {
+  html, body { height: 100dvh; overflow: hidden; overscroll-behavior: none; }
+  .jp-frame { height: 100dvh; }
+  .jp-app { flex-direction: column; flex-wrap: nowrap; height: auto; min-height: 0; overflow: hidden; }
+  .jp-rail {
+    flex: 0 1 auto; height: auto; max-height: 34%; min-height: 0;
+    padding-bottom: 10px;
+  }
+  .jp-pane { height: auto; min-width: 0; padding: 8px 12px 10px; }
+  /* The editor keeps the height the splitter gave it (an inline style, so
+     flex-basis has to stay `auto` for it to land); the notation takes
+     whatever is left and scrolls within it. */
+  .jp-pane-editor { flex: 0 1 auto; height: 44%; min-height: 108px; }
+  .jp-pane-score  { flex: 1 1 0; min-height: 128px; }
+  .jp-splitter {
+    flex: 0 0 5px; width: 100%; height: 5px; align-self: stretch; cursor: row-resize;
+  }
+  /* One scrollbar for the engraving, and room for it. */
+  .jp-score-scroll { overscroll-behavior: contain; }
+  .jp-score:last-child { margin-bottom: 4px; }
+}
+
+/* ── pane furniture ────────────────────────────────────────────────── */
+.jp-pane-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-bottom: 3px; border-bottom: 1px solid var(--divider); flex: 0 0 auto;
+}
+/* The section labels are furniture, not content: small, quiet and out of the
+   way, so the vertical room goes to the source and the engraving. */
+.jp-pane-title {
+  font-size: 9px; font-weight: 600; letter-spacing: 0.11em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+/* Except the source pane's, which is the transcription's NAME — content, not
+   furniture, so it drops the tracking and the shouting, and elides when the
+   pane is dragged narrow rather than shoving the tools off the edge. */
+.jp-pane-title.doc {
+  font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--text-2);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A head with no label at all: the tools keep the right edge they had. */
+.jp-pane-head.bare { justify-content: flex-end; }
+.jp-pane-tools, .jp-rail-btns { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+
+.jp-btn {
+  font: inherit; font-size: 11px; cursor: pointer;
+  color: var(--text-2); background: transparent;
+  border: 1px solid var(--divider); border-radius: 7px; corner-shape: squircle;
+  padding: 3px 9px;
+  transition: border-color .12s, color .12s;
+}
+.jp-btn:hover { border-color: var(--text-dim); color: var(--text); }
+.jp-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Icon-only variant. Sized explicitly to match the text buttons beside it:
+   align-self:stretch + aspect-ratio looked square in theory but collapsed in
+   practice, since the row's height is set by its content and the button was
+   the content. The glyph is a hand-drawn SVG — a Unicode "+" carries side
+   bearings and never centres. */
+.jp-btn.icon {
+  padding: 0; width: 22px; height: 22px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.jp-btn.on { border-color: var(--accent); color: var(--accent-text); }
+/* A button whose label is its own value. The width is held steady so the
+   controls beside it don't shuffle as the word changes. */
+.jp-btn.cycle { min-width: 58px; text-align: center; }
+.jp-btn.cycle span { font-family: var(--chord-font); }
+.jp-btn:disabled { color: var(--divider); border-color: var(--divider); cursor: not-allowed; }
+
+/* Segmented pair (C / B♭). One radius shared by track and cells so a selected
+   corner sits flush with the track — same trick as ui.css's .ui-seg. */
+.jp-seg {
+  display: inline-flex; background: var(--fill);
+  border-radius: 999px; corner-shape: superellipse(1.3);
+}
+.jp-seg button {
+  font: inherit; font-size: 11px; cursor: pointer;
+  color: var(--text-dim); background: transparent;
+  border: 1px solid transparent; border-radius: 999px; corner-shape: superellipse(1.3);
+  padding: 3px 9px; min-width: 30px;
+  transition: color .12s, border-color .12s;
+}
+.jp-seg button:hover { color: var(--text); }
+.jp-seg button.sel { border-color: var(--accent); color: var(--accent-text); }
+.jp-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The transposition stepper: − [semitones] +, in one bordered group so it
+   reads as a single control sitting beside the C / B♭ pair. Border-led like
+   the rest — when it's off zero, the whole group's edge lights up, which is
+   what says "this chart isn't in its written key" at a glance. */
+.jp-step {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: superellipse(1.3);
+  transition: border-color .12s;
+}
+.jp-step.on { border-color: var(--accent); }
+.jp-step button {
+  display: inline-flex; align-items: center; justify-content: center;
+  font: inherit; cursor: pointer; color: var(--text-2);
+  background: transparent; border: 0; border-radius: 999px;
+  padding: 3px 8px; line-height: 0;
+  transition: color .12s;
+}
+.jp-step button:hover { color: var(--text); }
+.jp-step button:disabled { color: var(--divider); cursor: not-allowed; }
+.jp-step button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.jp-step-in {
+  width: 3.4ch; padding: 3px 0;
+  font: inherit; font-size: 11px; text-align: center;
+  font-variant-numeric: tabular-nums;
+  background: none; border: 0; outline: none; color: var(--text-2);
+}
+.jp-step.on .jp-step-in { color: var(--accent-text); }
+.jp-step-in:focus { color: var(--text); }
+
+/* Transposing the SOURCE — the one that rewrites the document. It carries its
+   own name inside the group, because a bare − + sitting next to a count of
+   problems says nothing about what it would move, and this one moves
+   everything. */
+.jp-tr {
+  display: inline-flex; align-items: center; gap: 1px;
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: superellipse(1.3);
+  padding-left: 9px;
+  transition: border-color .12s;
+}
+.jp-tr:hover, .jp-tr:focus-within { border-color: var(--text-dim); }
+.jp-tr-label { font-size: 11px; color: var(--text-dim); }
+.jp-tr button {
+  display: inline-flex; align-items: center; justify-content: center;
+  font: inherit; cursor: pointer; color: var(--text-2);
+  background: transparent; border: 0; border-radius: 999px;
+  padding: 3px 7px; line-height: 0;
+  transition: color .12s;
+}
+.jp-tr button:hover { color: var(--text); }
+.jp-tr button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.jp-tr-in {
+  width: 2.8ch; padding: 3px 0;
+  font: inherit; font-size: 11px; text-align: center;
+  font-variant-numeric: tabular-nums;
+  background: none; border: 0; outline: none; color: var(--text-2);
+}
+.jp-tr-in:focus { color: var(--text); }
+.jp-tr-in::placeholder { color: var(--text-dim); }
+
+/* Toggle: a border that lights up, never a fill. */
+.jp-pill {
+  font: inherit; font-size: 11px; cursor: pointer;
+  color: var(--text-2); background: transparent;
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: superellipse(1.3);
+  padding: 3px 11px;
+  display: inline-flex; align-items: center; gap: 5px;
+  transition: border-color .12s, color .12s;
+}
+.jp-pill:hover { border-color: var(--text-dim); color: var(--text); }
+.jp-pill.on { border-color: var(--accent); color: var(--accent-text); }
+.jp-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.jp-pill svg, .jp-btn svg { overflow: visible; stroke-linejoin: round; stroke-linecap: round; }
+/* How many squiggles are in the source, and a way to land on the first. The
+   colour is the whole severity report — the message itself lives on the
+   squiggle, under the characters it's about. */
+.jp-flaws { color: var(--jp-mark); border-color: color-mix(in srgb, var(--jp-mark) 45%, transparent); padding: 3px 9px; }
+.jp-flaws:hover { color: var(--jp-mark); border-color: var(--jp-mark); }
+.jp-flaws.bad { color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.jp-flaws.bad:hover { color: var(--danger-text); border-color: var(--danger); }
+
+.jp-empty { color: var(--text-dim); font-size: 12px; padding: 10px 2px; }
+
+/* ── the transcription rail ────────────────────────────────────────── */
+/* The find row: the field, and the button that starts a new transcription.
+   The rule under the row belongs to the row rather than to the field, so it
+   runs the full width and the button sits on it too. */
+.jp-rail-find {
+  display: flex; align-items: center; gap: 6px; padding-bottom: 3px;
+  border-bottom: 1px solid var(--divider);
+}
+.jp-rail-find:has(.jp-rail-search:focus) { border-bottom-color: var(--accent); }
+.jp-rail-search {
+  font: inherit; font-size: 12px; flex: 1; min-width: 0;
+  background: transparent; color: var(--text);
+  border: 0;
+  padding: 4px 2px; outline: none;
+}
+
+/* The foot of the rail: what the library adds up to, and the one action that
+   applies to the library as a whole. Sticky rather than scrolled away with
+   the tree, so it reads as the panel's own bar — and painted with the page's
+   own background, since the rows have to pass underneath it. */
+.jp-rail-foot {
+  position: sticky; bottom: 0; z-index: 1; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding-top: 6px; border-top: 1px solid var(--divider);
+  background: var(--bg);
+}
+.jp-rail-count {
+  min-width: 0; font-size: 10px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.jp-doclist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; flex: 1 0 auto; }
+
+/* The columns: name, bars, edited — the same grid in the heading row and in
+   every row under it, so the numbers line up down the rail. The second track
+   is the open document's own buttons; empty (so zero wide) everywhere else. */
+.jp-cols, .jp-doc {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 54px 40px;
+  align-items: center; column-gap: 8px;
+}
+.jp-cols { padding: 0 1px; margin-bottom: -3px; }
+.jp-col {
+  display: inline-flex; align-items: center; gap: 3px;
+  font: inherit; font-size: 10px; color: var(--text-dim); cursor: pointer;
+  background: none; border: 0; padding: 2px 0;
+}
+.jp-col:first-child { grid-column: 1 / 3; padding-left: 7px; }
+.jp-col:nth-child(2) { justify-content: flex-end; padding-right: 6px; }
+.jp-col:last-child { justify-content: flex-start; }
+.jp-col:hover, .jp-col.on { color: var(--text-2); }
+.jp-col:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
+.jp-col svg { flex: 0 0 auto; opacity: .8; }
+
+.jp-doc { border: 1px solid transparent; border-radius: 7px; corner-shape: squircle; }
+.jp-doc:hover:not(.active) { border-color: var(--divider); }
+.jp-doc.active { border-color: var(--text-dim); }
+/* Where the KEYBOARD is in the list. "/" takes the focus into the search box
+   and the arrows walk the rows from there, so the row itself is never the
+   focused element and can't show it with a ring. Dashed rather than darker:
+   it has to read apart from the open document's solid border (they're often
+   the same row) without shouting over it. */
+.jp-doc.here { border-color: var(--accent); border-style: dashed; }
+.jp-doc:has(.jp-doc-name:focus) { border-color: var(--accent); }
+.jp-doc-pick, .jp-doc-name {
+  grid-column: 1; grid-row: 1; min-width: 0;
+  font: inherit; font-size: 12px; color: var(--text); text-align: left;
+  background: none; border: 0; padding: 3px 6px; outline: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jp-doc-pick { cursor: pointer; }
+.jp-doc-name, .jp-doc.active .jp-doc-pick { font-weight: 600; }
+.jp-doc-num {
+  grid-row: 1; font-size: 10px; color: var(--text-dim); text-align: right;
+  padding-right: 6px; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.jp-doc-num { grid-column: 3; }
+/* The bars column: a thin line whose length is how much music there is. A
+   filled mark on purpose — it's a tiny data-viz bar — but kept soft. */
+.jp-doc-len { grid-column: 4; grid-row: 1; padding-right: 6px; align-self: stretch; display: flex; align-items: center; }
+.jp-doc-len i {
+  display: block; height: 3px; border-radius: 2px;
+  background: color-mix(in srgb, var(--text-2) 45%, transparent);
+}
+.jp-doc:hover .jp-doc-len i, .jp-doc.active .jp-doc-len i { background: color-mix(in srgb, var(--text-2) 70%, transparent); }
+.jp-doc-acts { grid-column: 2; grid-row: 1; display: none; gap: 0; }
+/* The open document's buttons keep out of the way until the pointer is on its
+   row — or while one of them is in use (renaming, the history open), or has
+   the keyboard. With nothing to hover with, they're simply there. */
+.jp-doc:hover .jp-doc-acts, .jp-doc-acts.held, .jp-doc-acts:focus-within { display: flex; }
+@media (hover: none) { .jp-doc-acts { display: flex; } }
+.jp-doc-act {
+  cursor: pointer; border: 0; background: none; color: var(--text-dim);
+  padding: 2px 3px; line-height: 0; border-radius: 5px;
+}
+.jp-doc-act:hover { color: var(--text); }
+.jp-doc-act.danger:hover { color: var(--danger-text); }
+.jp-doc-act.on { color: var(--accent-text); }
+
+/* ── version history ────────────────────────────────────────────────
+   Opens as a full-width row underneath the open document, so the staff
+   pane stays visible — hovering a row previews that version there.
+   Everything in here is a size DOWN from the rail: it's an inset panel
+   inside a list row, and a control at the rail's own weight swamps it. */
+/* Spans every column of the row. Any horizontal margin here would hang the
+   panel past the document's border, so it's inset with padding instead,
+   which also runs the rule cleanly from edge to edge. */
+.jp-hist {
+  grid-column: 1 / -1; min-width: 0;
+  margin: 0; padding: 6px 9px 8px;
+  border-top: 1px solid var(--divider);
+}
+.jp-hist-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  font-size: 9px; font-weight: 600; letter-spacing: 0.11em; text-transform: uppercase;
+  color: var(--text-dim); padding: 0 2px 4px;
+}
+.jp-hist-add {
+  font: inherit; font-size: 10px; letter-spacing: 0; text-transform: none;
+  cursor: pointer; color: var(--text-dim); background: transparent;
+  border: 1px solid var(--divider); border-radius: 6px; corner-shape: squircle;
+  padding: 1px 6px; transition: border-color .12s, color .12s;
+}
+.jp-hist-add:hover { border-color: var(--text-dim); color: var(--text); }
+.jp-hist ul {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 1px;
+  max-height: 220px; overflow-y: auto;
+}
+.jp-hist-row {
+  display: flex; align-items: center;
+  border: 1px solid transparent; border-radius: 6px; corner-shape: squircle;
+}
+.jp-hist-row:hover { border-color: var(--divider); }
+/* Time on the left, what changed on the right — the time is what you're
+   scanning for, the summary is what confirms it. */
+.jp-hist-pick {
+  flex: 1; min-width: 0; display: flex; align-items: baseline;
+  justify-content: space-between; gap: 8px;
+  cursor: pointer; border: 0; background: none; color: var(--text);
+  font: inherit; font-size: 11px; padding: 3px 4px 3px 6px; text-align: left;
+}
+.jp-hist-when { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.jp-hist-what {
+  flex: 0 1 auto; font-size: 10px; color: var(--text-dim); text-align: right;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jp-hist-row.pinned .jp-hist-when { color: var(--accent-text); }
+.jp-hist-pin {
+  flex: 0 0 auto; cursor: pointer; border: 0; background: none;
+  color: var(--text-dim); opacity: .45;
+  padding: 3px; line-height: 0; border-radius: 5px;
+}
+.jp-hist-pin:hover { opacity: 1; color: var(--text); }
+.jp-hist-pin.on { opacity: 1; color: var(--accent-text); }
+.jp-hist .jp-empty { font-size: 10px; padding: 2px 2px 6px; }
+
+/* ── the numbers view ───────────────────────────────────────────────
+   Degrees in place of noteheads, and the staff apparatus taken away: the
+   five lines, the ledgers, the clef, and the key signature (which says
+   nothing once the numbers are relative to the key). Hidden with
+   `visibility`, not `display`, because chord placement and the number
+   positions are both worked out by measuring boxes — and a display:none
+   element hasn't got one.
+
+   What stays is everything that still means something without a staff:
+   barlines, the metre, stems and beams for the rhythm, chord symbols
+   (as roman numerals) and lyrics. */
+.jp-score-host.is-numbers .abcjs-staff,
+.jp-score-host.is-numbers .abcjs-ledger,
+.jp-score-host.is-numbers .abcjs-clef,
+.jp-score-host.is-numbers .abcjs-key-signature { visibility: hidden; }
+
+/* A stepped system is the second half of the line above it, so it doesn't say
+   the clef and key signature over again — the step and the missing clef
+   together are what read as "this carries on". Hidden the same way and for the
+   same reason: the positions around them were measured with them in place. */
+.jp-score-host .abcjs-staff-wrapper.jp-stepped .abcjs-clef,
+.jp-score-host .abcjs-staff-wrapper.jp-stepped .abcjs-key-signature { visibility: hidden; }
+.jp-score-host .jp-degree {
+  fill: var(--text); stroke: none;
+  font-family: 'Reddit Mono', ui-monospace, monospace;
+  font-weight: 600;
+  paint-order: stroke;
+}
+
+/* While previewing, the staff is showing something that is NOT the text in
+   the editor — say so, and wash it back so the difference is felt. */
+.jp-score-scroll.previewing { opacity: .82; }
+.jp-preview-bar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11px; color: var(--accent-text);
+  border: 1px solid var(--accent); border-radius: 8px; corner-shape: squircle;
+  padding: 4px 5px 4px 10px; margin-bottom: 10px;
+  background: var(--bg);
+}
+
+/* ── the editor: a mirror <pre> under a transparent-text <textarea> ──
+   Both layers MUST agree on every metric that moves a glyph — font, size,
+   line-height, padding, tab-size, white-space — or the hover hints land on
+   the wrong character. Keep them in this one shared rule. */
+.jp-ed {
+  position: relative; flex: 1 1 auto; min-height: 0;
+  border: 1px solid var(--divider); border-radius: 10px; corner-shape: squircle;
+  overflow: hidden;
+}
+/* Focused, the box says so plainly: the accent border, doubled by a soft ring
+   just outside it. Still no fill — the ring is a colour-mixed shadow, so it
+   reads as the border getting bolder rather than as a new box. */
+.jp-ed:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.jp-ed-layer {
+  position: absolute; inset: 0;
+  margin: 0; padding: 12px 14px; border: 0;
+  font-family: 'Reddit Mono', ui-monospace, Menlo, Consolas, monospace;
+  /* A WHOLE NUMBER of pixels, deliberately — not the 1.65 this used to be.
+     13 × 1.65 is 21.45px, and a textarea and a <pre> don't have to round a
+     fractional line box the same way. Half a pixel a line is invisible at the
+     top of a transcription and half a line out by the bottom of a long one:
+     the colour drifting off the characters, the selection sitting between two
+     rows, the caret apparently in the wrong place. Nothing to round, nothing
+     to drift. Same reason the font-size is an integer. */
+  font-size: 13px; line-height: 21px; letter-spacing: normal;
+  font-weight: 400; font-style: normal; font-variant: normal;
+  /* A form control and a <pre> can shape text differently; pin everything
+     that could change a glyph's advance so the two stay in lockstep. */
+  font-variant-ligatures: none; font-kerning: none;
+  text-indent: 0; text-transform: none; word-spacing: normal;
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+  tab-size: 2; white-space: pre; overflow-wrap: normal;
+}
+.jp-ed-mirror { overflow: hidden; pointer-events: none; color: var(--text); }
+/* The coloured text inside the mirror. It is MOVED to follow the textarea's
+   scroll rather than scrolled itself — see syncScroll in editor.tsx. */
+.jp-ed-ink { transform: translate(0, 0); }
+.jp-ed-area {
+  overflow: auto; resize: none; outline: none;
+  appearance: none; -webkit-appearance: none;
+  background: transparent; color: transparent; caret-color: var(--text);
+  /* NB: no `font:` shorthand here. It would reset size/line-height off the
+     shared rule above and drift the caret away from the visible mirror. */
+}
+/* The mirror sits UNDER the textarea, so the selection wash has to be
+   translucent for the coloured text to stay readable through it. */
+.jp-ed-area::selection { background: color-mix(in srgb, var(--accent) 32%, transparent); }
+.jp-ed-area::placeholder { color: var(--text-dim); }
+
+/* ── syntax colour ───────────────────────────────────────────────────
+   Colour ONLY — never weight. The textarea underneath is a single uniform
+   weight, so a bold span whose advance differs by even a fraction would slide
+   the visible mirror out from under the caret. */
+.jp-t-degree   { color: var(--text); }
+.jp-t-rest     { color: var(--text-dim); }
+.jp-t-perc     { color: var(--text-2); }
+.jp-t-acc      { color: var(--jp-meta); }
+.jp-t-octave   { color: var(--jp-meta); }
+.jp-t-dur      { color: var(--jp-dur); }
+.jp-t-dot      { color: var(--jp-dur); }
+.jp-t-dash     { color: var(--text-2); }
+.jp-t-bar      { color: var(--jp-mark); }
+.jp-t-repeat   { color: var(--jp-mark); }
+.jp-t-tuplet   { color: var(--jp-mark); }
+.jp-t-tie      { color: var(--jp-word); }
+.jp-t-slur     { color: var(--jp-word); }
+.jp-t-deco     { color: var(--jp-word); }
+.jp-t-header   { color: var(--jp-meta); }
+.jp-t-key      { color: var(--jp-meta); }
+.jp-t-meter    { color: var(--jp-meta); }
+.jp-t-tempo    { color: var(--jp-meta); }
+.jp-t-lyric    { color: var(--jp-word); }
+.jp-t-chordsym { color: var(--jp-word); }
+.jp-t-comment  { color: var(--text-dim); }
+.jp-t-directive{ color: var(--text-2); }
+/* A mark (M1, M2 …) is the one token that isn't about the music at all — it
+   names a place, and it answers to the strip along the bottom. So it takes the
+   app's own accent rather than one of the syntax hues. */
+.jp-t-mark     { color: var(--accent-text); }
+.jp-t-unknown  { color: var(--danger-text); text-decoration: underline wavy var(--danger); text-underline-offset: 3px; }
+
+/* The run that wrote the note under the pointer in the notation pane. A wash
+   rather than a border: it marks a run of TEXT, the way a selection does, and
+   a box around a couple of characters mid-line reads as noise. */
+.jp-ed-mirror .is-picked {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-radius: 3px; corner-shape: squircle;
+}
+
+/* The chord chart under the pointer, washed in so it's plain which characters
+   the bar is about to move. Lighter than .is-picked — that one answers a
+   deliberate hover on a notehead, this one happens whenever you cross a
+   chart. */
+.jp-ed-mirror .is-chart {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+  border-radius: 3px; corner-shape: squircle;
+}
+
+/* ── squiggles ─────────────────────────────────────────────────────────
+   Every error and warning is drawn where it happened: a wavy underline under
+   the exact characters, saying what's wrong when the pointer lands on it.
+   Nothing is listed under the pane. skip-ink off so the wave stays continuous
+   under descenders — a broken squiggle reads as two problems. */
+.jp-ed-mirror .jp-flaw {
+  text-decoration-line: underline; text-decoration-style: wavy;
+  text-decoration-thickness: 1px; text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+.jp-ed-mirror .jp-flaw-warn { text-decoration-color: var(--jp-mark); }
+.jp-ed-mirror .jp-flaw-err  { text-decoration-color: var(--danger); }
+
+/* In explain mode the character under the pointer gets a quiet underline, so
+   it's obvious which glyph the bubble is describing. */
+.jp-ed.explain .jp-t.is-hot {
+  text-decoration: underline; text-decoration-color: var(--accent);
+  text-underline-offset: 3px; text-decoration-thickness: 1px;
+}
+
+/* ── the hover hint ────────────────────────────────────────────────────
+   No delay and no transition — it must be there the instant the pointer
+   lands (a native title= waits about a second). */
+.jp-ed-hint {
+  position: absolute; z-index: 5; pointer-events: none;
+  transform: translate(-50%, -100%);
+  max-width: 260px;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 5px 9px;
+  background: var(--bg);
+  border: 1px solid var(--accent); border-radius: 7px; corner-shape: squircle;
+  font-size: 11px; line-height: 1.4; white-space: normal; text-align: center;
+}
+.jp-ed-hint.below { transform: translate(-50%, 0); }
+.jp-ed-hint b { font-weight: 600; color: var(--text); }
+.jp-ed-hint i { font-style: normal; color: var(--text-dim); }
+/* Reporting a squiggle: same bubble, wearing that squiggle's colour, and a
+   sentence rather than a label — so it's left-aligned and a touch wider. */
+.jp-ed-hint.flaw { max-width: 320px; text-align: left; }
+.jp-ed-hint.flaw b { font-weight: 400; color: var(--text-2); }
+.jp-ed-hint.flaw.warn { border-color: var(--jp-mark); }
+.jp-ed-hint.flaw.err { border-color: var(--danger); }
+
+/* ── the selection menu ────────────────────────────────────────────────
+   Floats over the selection, two lines: pick a key centre and the passage is
+   renumbered around it sounding exactly as before, or give it semitones and
+   the passage MOVES, chord symbols and all. Deliberately small and border-led
+   so it sits over the text without burying it. */
+/* The chord-chart bar: the same right-pinned box as the selection menu, one
+   row of it. It's a HOVER control, so it has to be reachable — the pointer
+   leaves the chart to get to it, and onMove treats the bar as still being on
+   the chart. */
+.jp-chords {
+  position: absolute; z-index: 6;
+  right: 6px;
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 6px;
+  background: var(--bg);
+  border: 1px solid var(--divider); border-radius: 8px; corner-shape: squircle;
+  font-size: 11px; line-height: 1.4; white-space: nowrap;
+  max-width: calc(100% - 12px);
+}
+
+.jp-respell {
+  position: absolute; z-index: 6;
+  right: 6px;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 3px;
+  padding: 3px 6px;
+  background: var(--bg);
+  border: 1px solid var(--divider); border-radius: 8px; corner-shape: squircle;
+  font-size: 11px; line-height: 1.4; white-space: nowrap;
+  max-width: calc(100% - 12px); overflow-x: auto; scrollbar-width: none;
+}
+/* One line per trade, and the labels share a column so the two read as a pair
+   of choices rather than two menus that happen to be stacked. */
+.jp-respell-row { display: flex; align-items: center; gap: 5px; }
+.jp-respell-row .jp-respell-label { min-width: 5.4em; text-align: right; }
+.jp-respell-label { color: var(--text-dim); }
+.jp-respell-label.bad { color: var(--danger-text); }
+
+.jp-key-chip {
+  padding: 1px 7px;
+  background: none; color: var(--text);
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: squircle;
+  font: inherit; font-size: 11px; cursor: pointer;
+}
+.jp-key-chip:hover { border-color: var(--accent); color: var(--accent-text); }
+.jp-key-chip:active { border-color: var(--accent); }
+.jp-key-chip.is-cur,
+.jp-key-chip:disabled {
+  color: var(--text-dim); border-style: dashed; cursor: default;
+}
+.jp-key-chip.is-cur:hover { border-color: var(--divider); color: var(--text-dim); }
+
+.jp-respell-in {
+  width: 4.5em; padding: 1px 6px;
+  background: none; color: var(--text);
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: squircle;
+  font: inherit; font-size: 11px;
+}
+.jp-respell-in:focus { outline: none; border-color: var(--accent); }
+.jp-respell-in::placeholder { color: var(--text-dim); }
+
+/* ── one-line notices ──────────────────────────────────────────────────
+   Parser and engraver complaints are squiggles in the source now (above);
+   what's left down here is the app talking about itself — a save, a sample
+   bank that wouldn't load. */
+.jp-diag { flex: 0 0 auto; font-size: 11px; line-height: 1.45; color: var(--text-2); }
+.jp-diag.ok { color: var(--text-dim); }
+.jp-diag.warn { color: var(--jp-mark); }
+.jp-diag.err { color: var(--danger-text); }
+
+.jp-saved { color: var(--accent-text); }
+/* …except when it's reporting a failure — that one keeps the danger colour. */
+.jp-diag.err.jp-saved { color: var(--danger-text); }
+
+/* ── the notation pane ─────────────────────────────────────────────── */
+/* Scrolls both ways. Sideways only comes up when a system is too dense to be
+   readable at the pane's width — the engraver widens it past the pane rather
+   than squeezing the bars (MIN_BAR_PX in staff.tsx), and this carries it. */
+.jp-score-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: auto;
+  padding-right: 4px;
+}
+.jp-score { margin-bottom: 14px; }
+/* Set while a notehead is within reach of the pointer — the staff is a live
+   map back into the source, so it should say so. */
+.jp-score-host.is-pickable { cursor: pointer; }
+/* abcjs paints everything black; recolour it to follow --text like the
+   other notation apps do. */
+/* NO width:100% here. The engraving is drawn to a width the renderer chose —
+   the pane's, or wider when the pane can't hold the bars at a readable size —
+   and stretching the SVG to its box would scale that decision away, shrinking
+   the very notes the extra width was for. It keeps the size it was drawn at
+   and the scroller above carries anything past the edge. */
+.jp-score svg { display: block; overflow: visible; max-width: none; }
+.jp-score svg path { fill: var(--text); }
+.jp-score svg .abcjs-staff path,
+.jp-score svg .abcjs-bar path,
+.jp-score svg .abcjs-stem path { stroke: var(--text); }
+.jp-score svg text { fill: var(--text); }
+/* The %%gchordfont directive can only name one family; these supply the
+   fallback chains (and win, since abcjs sets font-family as an attribute).
+   font-weight:normal because Petaluma Script ships a single weight and
+   anything heavier triggers a faux-bold that mangles its small features. */
+.jp-score svg text.abcjs-chord,
+.jp-score svg text.jp-chord {
+  font-family: var(--chord-font); font-weight: normal;
+}
+/* Our own drawing of the symbol (staff.tsx drawChords) sits over abcjs's
+   hidden one; its runs are sized and raised by chord-type.ts. */
+.jp-score svg text.jp-chord { fill: var(--text); }
+/* Inter at its regular weight is too thin a stroke to read at a glance over
+   a staff; the handwritten face has only the one weight (see above). */
+.chords-plain .jp-score svg text.jp-chord { font-weight: 600; }
+/* A bracketed run's [ and ] (staff.tsx drawChords): taller than the symbols
+   they hold, in the quieter ink so they group without shouting. */
+.jp-score svg polyline.jp-chord-bracket {
+  fill: none; stroke: var(--text-2); stroke-width: 1.3;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* Bar numbers (at the head of each system only — staff.tsx placeBarNumbers):
+   a quiet reference, not a heading. */
+.jp-score svg text.jp-barnum {
+  font-family: 'Inter', system-ui, sans-serif; font-size: 10px; font-weight: 400;
+  fill: var(--text-2);
+}
+/* The chord-face picker. abcjs names one family in %%gchordfont (which is
+   also what it measures the symbol's width with); these supply the real
+   fallback chain for each choice. Keep them in step with CHORD_FONTS in
+   transcribe/abc.ts. */
+.chords-jazz { --chord-font: 'Petaluma Script', 'Reddit Mono', ui-monospace, monospace; }
+.chords-plain { --chord-font: 'Inter', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; }
+/* The note the caret is in, lit as the source is written. The mirror of
+   .is-picked over in the editor — that one washes the characters a hovered
+   note came from, this one colours the note the characters are writing — so
+   the two panes always say where each other is. Ink rather than a wash: a box
+   drawn round a notehead reads as an accidental or an editorial bracket, and
+   there is nothing rectangular anywhere else on a staff. */
+.jp-score svg .jp-lit path { fill: var(--accent); }
+.jp-score svg .jp-lit .abcjs-stem path,
+.jp-score svg .jp-lit .abcjs-ledger path { stroke: var(--accent); }
+/* Numbers view: the degree drawn in the notehead's place is the note. */
+.jp-score svg .jp-lit .jp-degree { fill: var(--accent); }
+/* …but never the chord symbol hanging off it: the symbol belongs to the bar,
+   not to the note the caret happens to be in. */
+.jp-score svg .jp-lit text.abcjs-chord,
+.jp-score svg .jp-lit text.jp-chord { fill: var(--text); }
+
+.jp-score svg text.abcjs-annotation {
+  font-family: 'Reddit Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+/* A bookmark's number, standing in the chord row over the note it lands on.
+   Quiet: it is a reference into the recording, not something you read while
+   playing. No font-size here — the staff sizes each one off the symbol it
+   stands beside, so it tracks whatever scale the score was engraved at, and a
+   size set in CSS would win over that. */
+.jp-score svg text.jp-cue {
+  fill: var(--text-2); font-weight: 400;
+  font-family: 'Reddit Mono', ui-monospace, Menlo, Consolas, monospace;
+}
+.jp-score-err { color: var(--danger-text); font-size: 11px; padding: 6px 2px; }
+
+/* ── the phone ─────────────────────────────────────────────────────────
+   Under 560px (or a phone laid on its side, where the height is what ran
+   out) the split stops making sense: there's no room to write source and
+   read notation at once, and reading is what you brought a phone for. So the
+   app becomes one scroller — a header, then the engraving — and the library
+   arrives as a sheet from the bottom instead of living in a rail.
+
+   The header is INSIDE the scroller on purpose: it has said everything it
+   has to say by the time you start reading, so it should leave. The round
+   transport at the corner takes over once it has. */
+.jp-phone {
+  display: flex; flex-direction: column;
+  height: 100dvh; overflow: hidden;
+}
+.jp-phone button { touch-action: manipulation; }
+.jp-phone-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 7px;
+  /* Tight: a phone screen is mostly music, and every band of air here is a
+     bar of it lost. viewport-fit=cover, so the notch and the home indicator
+     are ours to dodge — see the meta tag in transcribe.html. */
+  padding:
+    calc(6px + env(safe-area-inset-top)) calc(9px + env(safe-area-inset-right))
+    calc(12px + env(safe-area-inset-bottom)) calc(9px + env(safe-area-inset-left));
+}
+
+.jp-phone-head {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 7px;
+  padding-bottom: 7px; border-bottom: 1px solid var(--divider);
+}
+/* Name over key/metre, with the library glyph beside both — the whole block
+   is the way into the picker. */
+.jp-phone-doc {
+  display: grid; grid-template-columns: auto minmax(0, 1fr);
+  align-items: center; column-gap: 8px; row-gap: 0;
+  font: inherit; text-align: left; cursor: pointer;
+  background: none; border: 0; color: var(--text); padding: 0;
+}
+.jp-phone-doc svg { grid-row: 1 / span 2; color: var(--text-dim); }
+.jp-phone-doc:active svg { color: var(--accent-text); }
+.jp-phone-name {
+  font-size: 14px; font-weight: 600; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jp-phone-sub {
+  font-size: 10px; line-height: 1.3; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The same controls the notation pane's head carries, wrapped onto as many
+   rows as the width needs. Nudged up from the pointer sizes for a fingertip,
+   but only just — a row of chunky controls is a system of music. */
+.jp-phone-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.jp-phone-tools .jp-btn.icon { width: 27px; height: 27px; }
+.jp-phone-tools .jp-pill,
+.jp-phone-tools .jp-seg button { padding: 4px 10px; }
+.jp-phone-tools .jp-btn.cycle { padding: 4px 8px; }
+.jp-phone-tools .jp-step button { padding: 4px 8px; }
+
+/* Double-tap a note to play from there, without the browser reading it as a
+   zoom. (`manipulation` keeps panning and pinch-zoom, drops the double-tap.) */
+.jp-phone-score { display: block; touch-action: manipulation; overflow-x: auto; }
+.jp-phone-score.previewing { opacity: .82; }
+.jp-phone-score .jp-score { margin-bottom: 8px; }
+
+/* The transport, once the header has scrolled off: play or stop from
+   anywhere in the chart. It carries a background because it sits over the
+   engraving and has to occlude it — everything else about it is the border. */
+.jp-phone-float {
+  position: fixed; z-index: 30;
+  right: calc(10px + env(safe-area-inset-right));
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  width: 42px; height: 42px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text-2); background: var(--bg);
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: superellipse(1.3);
+}
+.jp-phone-float.on { border-color: var(--accent); color: var(--accent-text); }
+.jp-phone-float:disabled { color: var(--divider); }
+
+/* Saves and imports have no pane to report under here, so they say it over
+   the music and fade out. */
+.jp-phone-flash {
+  position: fixed; left: 0; right: 0; z-index: 30; pointer-events: none;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  display: flex; justify-content: center; padding: 0 64px 0 12px;
+}
+.jp-phone-flash .jp-diag {
+  background: var(--bg); border: 1px solid var(--divider);
+  border-radius: 999px; corner-shape: superellipse(1.3);
+  padding: 5px 12px; font-size: 11px; text-align: center;
+}
+
+/* ── the library, as a sheet ───────────────────────────────────────────
+   The rail's list exactly — search, rename, duplicate, delete, history —
+   only up from the bottom on a tap rather than always on screen. Everything
+   in it gets a bigger hit target than the pointer version needs. */
+.jp-sheet-wrap { align-items: flex-end; padding: 0; }
+.jp-sheet {
+  width: 100%; max-height: 86dvh; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 9px;
+  background: var(--bg);
+  border: 1px solid var(--divider); border-bottom: 0;
+  border-radius: 16px 16px 0 0; corner-shape: squircle;
+  padding: 8px 14px calc(14px + env(safe-area-inset-bottom));
+}
+/* The grab bar. A rare filled shape, and deliberately: it's an indicator, and
+   the outlined version of it reads as a button you can press. */
+.jp-sheet-grip {
+  flex: 0 0 auto; align-self: center;
+  width: 34px; height: 4px; margin: 2px 0 4px;
+  background: var(--divider); border-radius: 999px;
+}
+.jp-sheet .jp-doc-pick, .jp-sheet .jp-doc-name { font-size: 13px; padding: 9px 7px; }
+.jp-sheet .jp-doc-act { padding: 7px 6px; }
+.jp-sheet .jp-rail-search { font-size: 13px; padding: 7px 2px; }
+.jp-sheet .jp-col { font-size: 11px; padding: 5px 0; }
+.jp-sheet-done { flex: 0 0 auto; padding: 9px; margin-top: 2px; }
+
+/* A tap leaves :hover stuck on iOS, which would park a hint bubble on the
+   last thing you touched. The hints are a pointer affordance; drop them where
+   there's no pointer. */
+@media (hover: none) {
+  [data-hint]:hover::after { content: none; }
+}
+
+/* ── the import target: the whole page ─────────────────────────────────
+   Shown only while a file is over the window. It never takes the pointer,
+   so the drop reaches the window listener that actually reads the file. */
+.jp-drop {
+  position: fixed; inset: 6px; z-index: 70; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--accent); border-radius: 14px; corner-shape: squircle;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+}
+.jp-drop-note {
+  font-size: 12px; color: var(--accent-text); background: var(--bg);
+  border: 1px solid var(--accent); border-radius: 999px; corner-shape: superellipse(1.3);
+  padding: 6px 14px;
+}
+
+/* ── the syntax cheat sheet, as a fullscreen popover ───────────────────
+   Reached with ` from anywhere. A scrim over the app, and a panel that caps
+   its own size so the list scrolls rather than the page. */
+.jp-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  padding: 4vh 4vw;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(3px);
+}
+.jp-overlay-panel {
+  display: flex; flex-direction: column; min-height: 0;
+  width: min(760px, 100%); max-height: 92vh;
+  background: var(--bg);
+  border: 1px solid var(--divider); border-radius: 12px; corner-shape: squircle;
+  padding: 14px 16px 16px;
+}
+.jp-cheat-head-r { display: flex; align-items: center; gap: 8px; }
+.jp-pill kbd {
+  font: inherit; font-size: 10px; color: var(--text-dim);
+  border: 1px solid var(--divider); border-radius: 4px; padding: 0 4px;
+}
+
+.jp-cheat { display: flex; flex-direction: column; gap: 8px; min-height: 0; flex: 1; }
+.jp-cheat-count { font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.jp-cheat-filter { position: relative; display: flex; align-items: center; }
+.jp-cheat-input {
+  font: inherit; font-size: 12px; width: 100%;
+  background: transparent; color: var(--text);
+  border: 0; border-bottom: 1px solid var(--divider);
+  padding: 4px 22px 4px 2px; outline: none;
+}
+.jp-cheat-input:focus { border-bottom-color: var(--accent); }
+.jp-cheat-clear {
+  position: absolute; right: 0; cursor: pointer; line-height: 0;
+  border: 0; background: none; color: var(--text-dim); padding: 3px;
+}
+.jp-cheat-clear:hover { color: var(--text); }
+
+.jp-cheat-only {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-2); cursor: pointer;
+}
+.jp-cheat-only input { accent-color: var(--accent); margin: 0; }
+
+.jp-cheat-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 3px; }
+@media (min-width: 700px) {
+  .jp-cheat-list { columns: 2; column-gap: 22px; }
+  .jp-cheat-group { break-inside: avoid; }
+}
+.jp-cheat-group { margin-bottom: 12px; }
+.jp-cheat-gname {
+  font-size: 9px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--text-dim); padding: 2px 0 4px;
+  position: sticky; top: 0; background: var(--bg); z-index: 1;
+}
+.jp-cheat-row {
+  padding: 5px 7px; margin-bottom: 1px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.jp-cheat-syntax {
+  font-family: inherit; font-size: 12px; color: var(--text); font-weight: 600;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.jp-cheat-what { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+.jp-sup { font-size: 10px; line-height: 1.35; }
+.jp-sup-partial { color: var(--jp-mark); }
+.jp-sup-no { color: var(--text-dim); }
+.jp-sup-yes { color: var(--jp-dur); }
+
+/* ── instant hover hints on the icon/text buttons (house rule: never rely
+   on the native title=, which waits about a second) ─────────────────── */
+[data-hint] { position: relative; }
+[data-hint]:hover::after {
+  content: attr(data-hint);
+  position: absolute; bottom: calc(100% + 5px); left: 50%; transform: translateX(-50%);
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--divider); border-radius: 6px; corner-shape: squircle;
+  padding: 2px 6px; font-size: 10px; line-height: 1.4; white-space: nowrap;
+  pointer-events: none; z-index: 20;
+}
+/* Absolutely positioned, the bubble is trapped: the rail is a scroller, so a
+   hint on a rail button gets clipped, and a button near an edge of the window
+   pushes its bubble off the screen. Anchored + fixed, it escapes every
+   scroller, and the fallbacks let it slide sideways or drop underneath the
+   button rather than hang off the viewport. */
+@supports (position-area: block-start center) {
+  [data-hint]:hover::after {
+    position: fixed;
+    inset: auto; transform: none;
+    position-area: block-start center;
+    position-try-fallbacks:
+      block-start span-inline-end, block-start span-inline-start,
+      block-end center, block-end span-inline-end, block-end span-inline-start;
+    margin: 5px;
+    max-width: calc(100vw - 12px); overflow: hidden; text-overflow: ellipsis;
+  }
+}
+
+
+/* ── the song strip ────────────────────────────────────────────────────
+   The recording a transcription was made from, along the bottom under both
+   panes. A transport is a wide, short thing — it wants the window's width and
+   almost none of its height — and down here it stays put whichever pane
+   you're working in.
+
+   Folded, it's a header strip you click to get it back — the last of the
+   fold-away panes, now that the three across the window are one rotation. */
+.jp-song {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 5px;
+  padding: 6px 13px 8px;
+  border-top: 1px solid var(--divider);
+}
+/* The grip for the strip's height: the section's top edge, a few pixels
+   thick. Draws nothing, like the splitter — the cursor is the affordance. */
+.jp-song-grip {
+  position: absolute; left: 0; right: 0; top: -3px; height: 7px; z-index: 5;
+  cursor: row-resize;
+}
+.jp-fold-song {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 13px;
+  border: none; border-top: 1px solid var(--divider);
+  background: none; color: var(--text-dim); cursor: pointer;
+  font: inherit; font-size: 12px;
+}
+.jp-fold-song:hover { color: var(--text); }
+.jp-fold-song:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.jp-fold-song svg { flex: 0 0 auto; }
+
+.jp-song-bar { display: flex; align-items: center; gap: 6px; min-width: 0; flex-wrap: wrap; }
+/* Side by side the strip doesn't fold, so its first control is the song name
+   rather than a toggle — give it the indent the toggle used to provide. */
+@media (min-width: 1201px) {
+  .jp-song { padding-left: 15px; }
+  /* The source and the engraving are one thing read two ways, so the channel
+     between them is as narrow as the divider can be grabbed through: their
+     facing paddings come off, and the splitter's own 5px is the whole gap.
+     The outer edges keep their air. */
+  .jp-pane-editor { padding-right: 4px; }
+  .jp-pane-score { padding-left: 4px; }
+}
+
+/* Truncated hard: the strip is a row of controls and the title is the one
+   thing on it that can be any length at all. The whole of it is in the hover
+   hint, so nothing is actually lost. */
+.jp-song-name {
+  max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* The strip itself: waveform, then every mark drawn over it as a thin rule.
+   Borders rather than fills throughout — a marker is a line you can see
+   through, so one never hides the shape of the music under it. */
+.jp-song-strip {
+  position: relative; width: 100%; flex: 0 0 auto;
+  height: var(--jp-strip-h, 60px); cursor: pointer;
+  border: 1px solid var(--divider); border-radius: 3px;
+  overflow: hidden;
+}
+.jp-song-strip:hover { border-color: var(--text-dim); }
+.jp-song-wave {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  --jp-wave: color-mix(in srgb, var(--text) 34%, transparent);
+}
+.jp-song-loop,
+.jp-song-mark,
+.jp-song-guess,
+.jp-song-start,
+.jp-song-head { position: absolute; top: 0; bottom: 0; width: 0; pointer-events: none; }
+
+/* The loop player's own loops: dimmest of the four, dashed, and never
+   interactive — they belong to the page next door and are shown, not owned. */
+.jp-song-loop { border-left: 1px dashed var(--divider); }
+
+/* A selected run of more than one, drawn as the stretch of song it is: the
+   marks in it still each carry their own wash, so the band reads as a length
+   with its marks a shade stronger — which is what a run of marks is. Drawn
+   before them, so nothing of theirs is covered, and never taking the pointer:
+   clicking inside the run is a click on the strip, which drops the selection
+   the way clicking off any selection does. */
+.jp-song-band {
+  position: absolute; top: 0; bottom: 0; pointer-events: none;
+  background: var(--accent-bg);
+}
+
+/* Ours. Wide enough to hit, drawn as a thin rule down the middle of that.
+   Hovering brings it up to full — it's a thing you can click. SELECTED, it
+   also takes a wash across its whole width, because "which mark are these
+   buttons pointing at" has to be answerable from across the strip, and a
+   hairline a shade brighter than its neighbours is not an answer. */
+.jp-song-mark {
+  width: 9px; margin-left: -4px; pointer-events: auto; cursor: pointer;
+  background:
+    linear-gradient(var(--accent), var(--accent)) 4px 0 / 1px 100% no-repeat;
+  opacity: .6;
+}
+.jp-song-mark:hover { opacity: 1; }
+.jp-song-mark.on { background-color: var(--accent-bg); opacity: 1; }
+
+/* Its number, written up against the rule. The number IS the mark — it's what
+   alt+1 aims at and what the M1 in the source answers to — so it's on the
+   strip rather than only in the hover bubble. Drawn through by the pointer, so
+   the 9px rule beside it stays the whole of what you click. */
+.jp-song-mark-n {
+  position: absolute; top: 1px; left: 6px;
+  font-size: 9px; font-style: normal; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-text); pointer-events: none;
+}
+.jp-song-mark.on .jp-song-mark-n { color: var(--text); }
+
+/* The guess: where the next mark would fall if the spacing of the ones already
+   down carries on. Drawn as a guess rather than as a mark — dashed and dimmer,
+   with the number it WOULD be — because it isn't one yet: clicking it goes
+   there and leaves it a guess, which is how you check it by ear. */
+.jp-song-guess {
+  width: 9px; margin-left: -4px; pointer-events: auto; cursor: pointer;
+  border-left: 1px dashed var(--accent);
+  transform: translateX(4px);
+  opacity: .45;
+}
+.jp-song-guess:hover { opacity: .85; }
+.jp-song-guess .jp-song-mark-n { left: 2px; }
+
+/* …and the + over it, which is what turns it into a mark. Floats above the
+   strip like the mark editor, since 40px of waveform has no room for a control
+   that isn't hiding the very thing it's aiming at. */
+/* Straddling the strip's top edge rather than floating clear of it: the band
+   above is the control row, and a button parked over a slider is a button in
+   the way. Half of it overhangs, which is enough to read as "above the line"
+   while staying part of the strip. */
+.jp-song-take {
+  position: absolute; top: -9px; z-index: 25;
+  transform: translateX(-50%);
+  width: 18px; height: 18px; padding: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent-text); background: var(--bg);
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: squircle;
+  transition: border-color .12s, color .12s;
+}
+.jp-song-take:hover { border-color: var(--accent); }
+.jp-song-take:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The start: a rule with a flag at the top, so it reads as a place you play
+   FROM rather than as one more tick. */
+.jp-song-start {
+  border-left: 1px solid var(--accent);
+}
+.jp-song-start::before {
+  content: ''; position: absolute; top: 0; left: 0;
+  border-top: 6px solid var(--accent);
+  border-right: 6px solid transparent;
+}
+
+/* The head. The one line that moves, so it only has to be the clearest of
+   the four — not a hard dark rule across the music. */
+.jp-song-head { border-left: 1.5px solid var(--text-2); }
+
+/* The strip and the row that edits a mark share one box, so the row can be
+   placed as a fraction of the strip's own width the way every marker on it is.
+   The strip clips its contents (a marker at 0% or 100% would otherwise hang
+   over the edge), which is the other reason the row can't live inside it. */
+.jp-song-place { position: relative; width: 100%; flex: 0 0 auto; }
+
+/* The selected mark's controls, floating over the strip: which mark it is, a
+   beat back, a beat on, and out. Above rather than below — the strip sits on
+   the bottom edge of the window. It opens on a click and stays open until
+   another mark is picked or the strip is clicked off them, so there is no
+   hurry to reach it and nothing it has to bridge. */
+.jp-song-edit {
+  position: absolute; bottom: 100%; margin-bottom: 6px; z-index: 30;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--divider); border-radius: 9px; corner-shape: squircle;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 10%, transparent);
+}
+.jp-song-edit-n {
+  font-size: 11px; color: var(--accent-text); font-variant-numeric: tabular-nums;
+}
+.jp-song-edit-at {
+  font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums;
+  margin-right: 2px;
+}
+.jp-song-edit .jp-btn.icon { width: 20px; height: 20px; }
+.jp-song-edit .jp-btn.danger:hover { border-color: var(--danger); color: var(--danger-text); }
+
+.jp-song-zoom { display: flex; align-items: center; gap: 2px; flex: none; }
+.jp-song-time {
+  flex: 0 0 auto; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums;
+}
+.jp-song-time i { color: var(--text-dim); font-style: normal; }
+
+/* Takes the slack, so the two knobs sit against the right edge however many
+   stems the song has. */
+.jp-song-tracks { display: flex; align-items: flex-start; gap: 4px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; margin-left: 4px; }
+/* A stem's switch is a name in a row of names — it needs the air a pill takes
+   round a word far less than it needs to fit beside five others. */
+.jp-song-track .jp-pill { padding: 3px 8px; }
+
+/* One track: the switch, and how loud it sits, stacked so the level reads as
+   belonging to the name above it rather than as another control in the row.
+   The slider takes the pill's width — a level is a small adjustment next to a
+   name, not a fader you aim at. */
+.jp-song-track { display: flex; flex-direction: column; align-items: stretch; gap: 1px; min-width: 0; }
+.jp-song-lvl { display: flex; }
+.jp-song-lvl .jp-song-sld { width: 100%; min-width: 0; height: 11px; }
+/* Switched off, the level is still there and still says what it says — it just
+   isn't doing anything, and shouldn't read as if it were. */
+.jp-song-lvl.out { opacity: 0.4; }
+
+/* Moving the recording, a semitone at a time: down, the amount, up. The amount
+   is a button too — it says where you are and puts you back at the record's own
+   pitch — and it holds its width so the two arrows don't shuffle as it counts.
+   Tight against each other, because the three are one control. */
+.jp-song-shift { display: flex; align-items: center; gap: 1px; flex: none; }
+.jp-song-semis {
+  font: inherit; font-size: 11px; font-variant-numeric: tabular-nums;
+  min-width: 20px; height: 22px; padding: 0; cursor: pointer;
+  border: 1px solid transparent; border-radius: 7px; corner-shape: squircle;
+  background: none; color: var(--text-dim);
+  transition: border-color .12s, color .12s;
+}
+/* At the recording's own pitch it is a readout and nothing more; moved, it is
+   the way back, and says so with a border like every other live control. */
+.jp-song-semis.on { border-color: var(--accent); color: var(--accent-text); }
+.jp-song-semis:hover { border-color: var(--text-dim); color: var(--text); }
+.jp-song-semis:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The two knobs. Narrow on purpose: the strip is one row of controls over the
+   waveform, and a row that wraps costs a band of the window that the music
+   was using. The tempo keeps room for its readout; the volume, having none,
+   asks for less. */
+.jp-song-knob {
+  display: flex; align-items: center; gap: 5px; flex: 0 1 120px;
+  font-size: 11px; color: var(--text-2);
+}
+.jp-song-knob.vol { flex: 0 1 78px; }
+.jp-song-knob span { min-width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+.jp-song-knob input { flex: 1 1 auto; min-width: 0; }
+
+/* The two sliders. Native range inputs, restyled to the border-led look the
+   rest of the page keeps: a hairline track and a hollow thumb, so a knob at
+   rest is a line rather than a lozenge of colour. */
+.jp-song-sld { -webkit-appearance: none; appearance: none; height: 14px; background: none; cursor: pointer; }
+.jp-song-sld:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.jp-song-sld::-webkit-slider-runnable-track { height: 1px; background: var(--divider); }
+.jp-song-sld::-moz-range-track { height: 1px; background: var(--divider); }
+.jp-song-sld::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; margin-top: -5px; border-radius: 50%;
+  background: var(--bg); border: 1px solid var(--text-dim);
+}
+.jp-song-sld::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--bg); border: 1px solid var(--text-dim);
+}
+.jp-song-sld:hover::-webkit-slider-thumb { border-color: var(--text); }
+.jp-song-sld:hover::-moz-range-thumb { border-color: var(--text); }
+
+/* ── the mixer ─────────────────────────────────────────────────────────
+   Three rows, one per voice: the switch is the name itself, then what it's
+   played on, then how loud. Laid out on a grid so the three read as a column
+   of the same decision rather than three sentences.
+
+   A dropdown under its button rather than a dialog over the page — you set it
+   WHILE listening, and a modal that hides the music you're listening to is
+   answering a different question. Fixed, and placed from the button's own
+   rectangle, so no pane it was opened inside can clip it. */
+.jp-mix {
+  position: fixed; z-index: 40;
+  width: min(340px, calc(100vw - 16px));
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 7px 10px 9px;
+  background: var(--bg);
+  border: 1px solid var(--divider); border-radius: 10px; corner-shape: squircle;
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--text) 12%, transparent);
+}
+.jp-mix-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-bottom: 3px;
+}
+.jp-mix-title { font-size: 11px; color: var(--text-2); }
+.jp-mix-hint { font-size: 10px; color: var(--text-dim); }
+.jp-mix-row {
+  display: grid; grid-template-columns: 4.6em 6.4em 1fr; gap: 7px;
+  align-items: center; padding: 4px 0;
+}
+.jp-mix-row .jp-pill { width: 100%; justify-content: center; }
+/* A voice the chart hasn't got anything for yet: still shown, so the mixer
+   says what a song COULD have, but plainly not in play. */
+.jp-mix-row.empty { opacity: .5; }
+.jp-mix-vol { width: 100%; }
+/* What the voice is, in a word — third column, under the slider. */
+.jp-mix-note {
+  grid-column: 2 / -1; margin-top: -4px;
+  font-size: 10px; color: var(--text-dim);
+}
+
+.jp-mix-sel {
+  padding: 1px 5px;
+  background: none; color: var(--text);
+  border: 1px solid var(--divider); border-radius: 999px; corner-shape: squircle;
+  font: inherit; font-size: 11px; cursor: pointer;
+}
+.jp-mix-sel:hover { border-color: var(--accent); }
+.jp-mix-sel:focus-visible { outline: none; border-color: var(--accent); }
+
+/* A button that takes something away keeps the page's one warm colour. */
+.jp-btn.danger { color: var(--danger-text); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.jp-btn.danger:hover { border-color: var(--danger); }
+
+/* The picker: the loop library, filtered. */
+.jp-song-pick { width: min(560px, 92vw); max-height: 74vh; display: flex; flex-direction: column; gap: 8px; }
+.jp-song-list { flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.jp-song-row {
+  display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
+  padding: 5px 8px; border: 1px solid transparent; border-radius: 4px;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.jp-song-row:hover { border-color: var(--divider); }
+.jp-song-row.on { border-color: var(--accent); }
+.jp-song-title { font-size: 13px; }
+.jp-song-meta { font-size: 11px; color: var(--text-dim); }
+.jp-song-empty { padding: 14px 8px; color: var(--text-dim); font-size: 12px; }
+.jp-song-foot { display: flex; justify-content: flex-end; gap: 6px; }
+
+/* ── printing ──────────────────────────────────────────────────────────
+   What comes out of the printer is the MUSIC — not the workbench it was
+   written at. The page is the notation pane's engraving and nothing else:
+   the library, the source, the song strip, every pane header and every
+   control go, and the score, freed of the scroller it lived in, flows down
+   as many sheets as it takes.
+
+   It prints what's on screen rather than re-engraving at paper width, which
+   is the honest thing: the systems break where you have been reading them
+   break. Widen the notation pane before printing and the printed page
+   follows.
+
+   Colours are forced to ink on white whatever theme the screen is in — a
+   dark theme sent to a printer is a page of toner. */
+@media print {
+  :root, :root[data-theme="dark"] {
+    --bg: #ffffff; --surface: #ffffff; --surface-2: #ffffff;
+    --text: #000000; --text-2: #333333; --text-dim: #555555;
+    --divider: rgba(0, 0, 0, .25); --fill: none;
+    --accent: #000000; --accent-bg: transparent; --accent-text: #000000;
+  }
+  html, body { height: auto; background: #fff; }
+  /* Everything that isn't the engraving. */
+  .jp-rail, .jp-fold-song, .jp-splitter, .jp-song, .jp-pane-editor, .jp-pane-head,
+  .jp-diag, .jp-overlay, .jp-drop, .jp-preview-bar, .jp-phone-float,
+  .jp-phone-bar, .jp-phone-head, .jp-phone-doc, .jp-sheet, .jp-flash,
+  .jp-score-err { display: none !important; }
+  /* …and the frames it sat in, which were all about fitting a window. */
+  .jp-frame, .jp-app, .jp-pane, .jp-pane-score, .jp-phone {
+    display: block; height: auto; min-height: 0; overflow: visible;
+    padding: 0; margin: 0; flex: none;
+  }
+  .jp-phone-scroll,
+  .jp-score-scroll, .jp-phone-score {
+    display: block; height: auto; overflow: visible; padding: 0; flex: none;
+    opacity: 1;
+  }
+  /* A system is a line of music: break the page between two of them, never
+     through one. */
+  .jp-score { margin: 0 0 12px; break-inside: avoid; }
+  .jp-score svg { width: 100% !important; height: auto !important; }
+  /* The name of the transcription, over the first system — printed only when
+     the music doesn't already carry a title of its own. */
+  .jp-print-head {
+    display: block; font-size: 15px; font-weight: 600;
+    margin: 0 0 10px; color: #000;
+  }
+  @page { margin: 14mm; }
+}
+/* On screen it isn't there at all. */
+.jp-print-head { display: none; }
+
+/* ── standalone: the uploaded-song list ──────────────────────────────── */
+.jp-song-item { display: flex; align-items: center; gap: 4px; }
+.jp-song-item .jp-song-row { flex: 1 1 auto; min-width: 0; }
+.jp-song-foot-gap { flex: 1 1 auto; }
+
+/* ── standalone: help links (top right) and the shortcuts panel ────────── */
+.jp-help-links { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding-left: 8px; border-left: 1px solid var(--divider); }
+.jp-help-link, .jp-keys-link {
+  font: inherit; font-size: 11px; color: var(--text-dim); background: none;
+  border: 1px solid transparent; border-radius: 4px; padding: 2px 5px; cursor: pointer;
+}
+.jp-help-link:hover { color: var(--text-2); border-color: var(--divider); }
+.jp-keys-link { padding: 0; font-size: inherit; color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-underline-offset: 2px; }
+.jp-phone-help { display: flex; justify-content: flex-end; padding: 0 12px 4px; }
+.jp-phone-help .jp-help-links { border-left: 0; padding-left: 0; }
+
+.jp-keys { display: flex; flex-direction: column; min-height: 0; }
+.jp-keys .jp-pane-head { margin-bottom: 8px; }
+.jp-keys-body { overflow-y: auto; min-height: 0; font-size: 12px; }
+.jp-keys-about { margin: 0 0 14px; padding-left: 16px; color: var(--text-2); line-height: 1.55; }
+.jp-keys-about li + li { margin-top: 6px; }
+.jp-keys-about code { font-family: 'Reddit Mono', ui-monospace, monospace; font-size: 11px; }
+.jp-keys-group + .jp-keys-group { margin-top: 12px; }
+.jp-keys-title { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-dim); padding-bottom: 3px; margin-bottom: 4px; border-bottom: 1px solid var(--divider); }
+.jp-keys-row { display: grid; grid-template-columns: minmax(150px, 38%) 1fr; gap: 12px; align-items: baseline; padding: 3px 0; }
+.jp-keys-keys { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.jp-keys-chord { display: inline-flex; gap: 2px; }
+.jp-keys-or { color: var(--text-dim); }
+.jp-keys-what { color: var(--text-2); }
+.jp-keys kbd {
+  font-family: 'Reddit Mono', ui-monospace, monospace; font-size: 10.5px; line-height: 1;
+  padding: 3px 5px; min-width: 18px; text-align: center;
+  border: 1px solid var(--divider); border-radius: 4px; color: var(--text);
+}
+@media (max-width: 520px) {
+  .jp-keys-row { grid-template-columns: 1fr; gap: 2px; }
+}
