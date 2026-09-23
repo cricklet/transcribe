@@ -27,7 +27,7 @@ import * as H from './history';
 import * as L from './songs';
 import { DOXY_NAME, DOXY_TEXT } from './doxy';
 import { FLANAGAN_NAME, FLANAGAN_TEXT } from './flanagan';
-import { BLUES_NAME, BLUES_TEXT } from './blues';
+import { TENOR_MADNESS_NAME, TENOR_MADNESS_TEXT } from './tenor-madness';
 import { ChordFont, ChordView, Doc, DocAudio, DocSort, Side, Span, TICKS_PER_WHOLE, Voice, VOICES, VoiceMix } from './types';
 
 const STARTER_TEXT = `1=C 4/4
@@ -156,7 +156,7 @@ function initialDocs(): Doc[] {
   return [
     [DOXY_NAME, DOXY_TEXT],
     [FLANAGAN_NAME, FLANAGAN_TEXT],
-    [BLUES_NAME, BLUES_TEXT],
+    [TENOR_MADNESS_NAME, TENOR_MADNESS_TEXT],
   ].map(([name, text]) => ({ ...P.newDoc(name, text), swing: true }));
 }
 

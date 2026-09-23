@@ -1,7 +1,7 @@
 // Bundled with the app: the library starts with this in it.
-export const BLUES_NAME = 'Blues in C';
+export const TENOR_MADNESS_NAME = 'Tenor Madness';
 
-export const BLUES_TEXT = String.raw`CONCERT=Bb
+export const TENOR_MADNESS_TEXT = String.raw`CONCERT=Bb
 1=C 4/4
 4=160
 
