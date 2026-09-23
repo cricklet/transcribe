@@ -2305,6 +2305,18 @@ function DocList(props: {
             </button>
           </span>
         )}
+        {/* Any other row can be deleted from where it sits, on hover — no need
+            to open it first. The rest of the buttons act on the open one. */}
+        {!active && (
+          <span class="jp-doc-acts">
+            <button class="jp-doc-act danger" data-hint="delete" aria-label={`Delete ${d.name || 'untitled'}`}
+              onClick={() => { if (confirm(`Delete “${d.name || 'untitled'}”?`)) props.onDelete(d.id); }}>
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                <path d="M5.3 4.2 12 10.9l6.7-6.7a.8.8 0 0 1 1.1 1.1L13.1 12l6.7 6.7a.8.8 0 0 1-1.1 1.1L12 13.1l-6.7 6.7a.8.8 0 0 1-1.1-1.1L10.9 12 4.2 5.3a.8.8 0 0 1 1.1-1.1Z" />
+              </svg>
+            </button>
+          </span>
+        )}
         {active && props.histOpen && (
           <History
             list={props.history}
