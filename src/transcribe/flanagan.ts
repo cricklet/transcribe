@@ -5,7 +5,7 @@ export const FLANAGAN_TEXT = String.raw`CONCERT=Bb
 1=Ab
 K=Ab
 4/4
-4=150
+4=200
 
 C"""
 Ab7 | | | |
