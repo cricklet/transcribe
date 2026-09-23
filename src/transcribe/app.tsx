@@ -28,17 +28,6 @@ import * as L from './songs';
 import { DOXY_NAME, DOXY_TEXT } from './doxy';
 import { ChordFont, ChordView, Doc, DocAudio, DocSort, Side, Span, TICKS_PER_WHOLE, Voice, VOICES, VoiceMix } from './types';
 
-const DEFAULT_TEXT = `% Transcribe — numbered notation in, engraved staff out.
-% Flip on "explain" and hover any character to see what it means.
-% Press alt+/ for the searchable syntax reference, \` for the library.
-
-title=Warm-up
-1=C 4/4
-4=88
-
-1 2 3 4 | 5 - 3 - | q6 q5 q4 q3 2 - | 1 - - -
-`;
-
 const STARTER_TEXT = `1=C 4/4
 
 1 2 3 4 | 5 - - -
@@ -161,10 +150,10 @@ function putDocInUrl(id: string, mode: 'push' | 'replace') {
 function initialDocs(): Doc[] {
   const docs = P.loadDocs();
   if (docs.length) return docs;
-  // A first visit opens on Doxy, with the warm-up beside it.
+  // A first visit opens on Doxy.
   const doxy = P.newDoc(DOXY_NAME, DOXY_TEXT);
   doxy.swing = true;
-  return [doxy, P.newDoc('Warm-up', DEFAULT_TEXT)];
+  return [doxy];
 }
 
 export function App() {

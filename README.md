@@ -35,7 +35,7 @@ move work between them.
   the app works.
 - `alt+/` or **notation** (top right) opens the notation reference.
 - **explain** above the source: hover any character to see what it means.
-- The library starts with Miles Davis's *Doxy* and a warm-up.
+- The library starts with Miles Davis's *Doxy*.
 
 You need an internet connection for playing the notation back (the instrument
 samples come from a CDN) and for the UI fonts. Engraving, editing, storage and
