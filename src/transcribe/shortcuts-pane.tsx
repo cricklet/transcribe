@@ -30,9 +30,7 @@ const GROUPS: Group[] = [
     rows: [
       { keys: [[ALT, '['], [ALT, ']']], what: 'step to the previous / next note and hear it' },
       { keys: [[ALT, '\\']], what: 'play on from the caret' },
-      { keys: [[ALT, '←'], [ALT, '→']], what: 'move a token at a time (add shift to select)' },
       { keys: [[CMD, '/']], what: 'comment the line out, or back in' },
-      { keys: [['Tab']], what: 'indent' },
     ],
   },
   {
@@ -55,14 +53,6 @@ const GROUPS: Group[] = [
       { keys: [[ALT, 'M']], what: 'drop a bookmark at the playhead' },
       { keys: [[ALT, '1'], [ALT, '0']], what: 'jump to bookmark 1 … 10 (type two digits for 11+)' },
       { keys: [[ALT, '-'], [ALT, '=']], what: 'previous / next bookmark' },
-    ],
-  },
-  {
-    title: 'Library search',
-    rows: [
-      { keys: [['↑'], ['↓']], what: 'move through the matches' },
-      { keys: [['Enter']], what: 'open it' },
-      { keys: [['Esc']], what: 'clear the search' },
     ],
   },
 ];
