@@ -27,6 +27,7 @@ import * as H from './history';
 import * as L from './songs';
 import { DOXY_NAME, DOXY_TEXT } from './doxy';
 import { FLANAGAN_NAME, FLANAGAN_TEXT } from './flanagan';
+import { BLUES_NAME, BLUES_TEXT } from './blues';
 import { ChordFont, ChordView, Doc, DocAudio, DocSort, Side, Span, TICKS_PER_WHOLE, Voice, VOICES, VoiceMix } from './types';
 
 const STARTER_TEXT = `1=C 4/4
@@ -151,12 +152,12 @@ function putDocInUrl(id: string, mode: 'push' | 'replace') {
 function initialDocs(): Doc[] {
   const docs = P.loadDocs();
   if (docs.length) return docs;
-  // A first visit opens on Doxy, with the Flanagan demo beside it.
-  const doxy = P.newDoc(DOXY_NAME, DOXY_TEXT);
-  doxy.swing = true;
-  const flanagan = P.newDoc(FLANAGAN_NAME, FLANAGAN_TEXT);
-  flanagan.swing = true;
-  return [doxy, flanagan];
+  // A first visit opens on Doxy, with the other demos beside it.
+  return [
+    [DOXY_NAME, DOXY_TEXT],
+    [FLANAGAN_NAME, FLANAGAN_TEXT],
+    [BLUES_NAME, BLUES_TEXT],
+  ].map(([name, text]) => ({ ...P.newDoc(name, text), swing: true }));
 }
 
 export function App() {
