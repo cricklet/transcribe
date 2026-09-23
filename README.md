@@ -35,7 +35,7 @@ move work between them.
   the app works.
 - `alt+/` or **notation** (top right) opens the notation reference.
 - **explain** above the source: hover any character to see what it means.
-- The library starts with Miles Davis's *Doxy*.
+- The library starts with Miles Davis's *Doxy* and a Flanagan demo.
 
 You need an internet connection for playing the notation back (the instrument
 samples come from a CDN) and for the UI fonts. Engraving, editing, storage and
@@ -59,7 +59,7 @@ src/transcribe/     the app (Preact)
   persistence.ts    localStorage
   audio-pane.tsx    the song strip
   shortcuts-pane.tsx  the shortcuts / how-it-works panel
-  doxy.ts           the bundled Doxy transcription
+  doxy.ts, flanagan.ts  the bundled transcriptions
 src/melodic-trainer/, src/rhythm-library/   shared notation helpers
 assets/             CSS and the Petaluma Script chord font
 ```

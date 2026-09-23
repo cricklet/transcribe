@@ -26,6 +26,7 @@ import * as P from './persistence';
 import * as H from './history';
 import * as L from './songs';
 import { DOXY_NAME, DOXY_TEXT } from './doxy';
+import { FLANAGAN_NAME, FLANAGAN_TEXT } from './flanagan';
 import { ChordFont, ChordView, Doc, DocAudio, DocSort, Side, Span, TICKS_PER_WHOLE, Voice, VOICES, VoiceMix } from './types';
 
 const STARTER_TEXT = `1=C 4/4
@@ -150,10 +151,12 @@ function putDocInUrl(id: string, mode: 'push' | 'replace') {
 function initialDocs(): Doc[] {
   const docs = P.loadDocs();
   if (docs.length) return docs;
-  // A first visit opens on Doxy.
+  // A first visit opens on Doxy, with the Flanagan demo beside it.
   const doxy = P.newDoc(DOXY_NAME, DOXY_TEXT);
   doxy.swing = true;
-  return [doxy];
+  const flanagan = P.newDoc(FLANAGAN_NAME, FLANAGAN_TEXT);
+  flanagan.swing = true;
+  return [doxy, flanagan];
 }
 
 export function App() {
